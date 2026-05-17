@@ -69,7 +69,9 @@ jobs:
   package:
     name: Package ${{ matrix.artifact }}
     needs: [discover, validate]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -91,96 +93,35 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Create release
+    name: Publish release
     needs: [discover, validate, package]
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
-    outputs:
-      upload_url: ${{ steps.create_release.outputs.upload_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
+          path: dist
+          merge-multiple: true
 
       - name: Set release metadata
         id: meta
         run: |
-          # Version format: YYMM.dd.rev (UTC)
           base="$(date -u +%y%m).$(date -u +%d)"
-          base_regex="^v$(echo "$base" | sed 's/\./\\./g')\\.([0-9]+)"
-          latest_rev=0
-
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            tag_suffix=""
-            name_prefix="Release"
-            prerelease="false"
-          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
-            tag_suffix="-pre"
-            name_prefix="Pre-release"
-            prerelease="true"
+            echo "tag=v$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "name=Release v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
-            echo "Unsupported branch for release: ${{ github.ref }}"
-            exit 1
+            echo "tag=v$base.${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
+            echo "name=Pre-release v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
-          for tag in $(git tag -l "v${base}.*"); do
-            if [[ "$tag" =~ ${base_regex}${tag_suffix}$ ]]; then
-              rev="${BASH_REMATCH[1]}"
-              if [ "$rev" -gt "$latest_rev" ]; then
-                latest_rev="$rev"
-              fi
-            fi
-          done
-
-          version="${base}.$((latest_rev + 1))"
-          echo "tag=v${version}${tag_suffix}" >> "$GITHUB_OUTPUT"
-          echo "name=${name_prefix} ${version}" >> "$GITHUB_OUTPUT"
-          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
-
-      - name: Generate release notes
-        id: notes
-        run: |
-          {
-            echo "body<<EOF"
-            echo "## Changes"
-            git log -10 --pretty=format:"- %s (%h)"
-            echo ""
-            echo "EOF"
-          } >> "$GITHUB_OUTPUT"
-
-      - name: Create GitHub release
-        id: create_release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
-          release_name: ${{ steps.meta.outputs.name }}
-          body: ${{ steps.notes.outputs.body }}
-          draft: false
-          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
-
-  upload-assets:
-    name: Upload ${{ matrix.artifact }}
-    needs: [discover, release]
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include: ${{ fromJson(needs.discover.outputs.matrix) }}
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          path: dist
-
-      - name: Upload release asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.release.outputs.upload_url }}
-          asset_path: dist/${{ matrix.artifact }}.zip
-          asset_name: ${{ matrix.artifact }}.zip
-          asset_content_type: application/zip
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          generate_release_notes: false
+          files: dist/*.zip
