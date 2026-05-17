@@ -15,7 +15,6 @@ permissions:
   contents: write
 
 env:
-  TF_VERSION: "1.9.8"
   TERRAFORM_SRC: src/terraform
 
 jobs:
@@ -54,8 +53,6 @@ jobs:
       - uses: actions/checkout@v4
 
       - uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TF_VERSION }}
 
       - name: Terraform fmt
         run: terraform fmt -check -recursive
