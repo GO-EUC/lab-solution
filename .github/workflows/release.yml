@@ -24,7 +24,7 @@ jobs:
     outputs:
       matrix: ${{ steps.modules.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Build solution matrix
         id: modules
@@ -50,7 +50,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - uses: hashicorp/setup-terraform@v3
 
@@ -78,7 +78,7 @@ jobs:
       matrix:
         include: ${{ fromJson(needs.discover.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Create artifact archive
         run: |
@@ -86,7 +86,7 @@ jobs:
           (cd "${{ matrix.path }}" && zip -r "$GITHUB_WORKSPACE/dist/${{ matrix.artifact }}.zip" . \
             -x '.terraform/*' -x '*.tfstate' -x '*.tfstate.*')
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: dist/${{ matrix.artifact }}.zip
@@ -109,11 +109,11 @@ jobs:
           base="$(date -u +%y%m).$(date -u +%d)"
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             echo "tag=v$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "name=Release v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "name=Release v$base.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
             echo "prerelease=false" >> "$GITHUB_OUTPUT"
           else
             echo "tag=v$base.${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
-            echo "name=Pre-release v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
+            echo "name=Pre-release v$base.${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
             echo "prerelease=true" >> "$GITHUB_OUTPUT"
           fi
 
