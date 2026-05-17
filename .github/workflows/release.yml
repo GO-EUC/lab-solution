@@ -1,0 +1,127 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+      - develop
+  pull_request:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  TF_VERSION: "1.9.8"
+  TERRAFORM_SRC: src/terraform
+
+jobs:
+  discover:
+    name: Discover solutions
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.modules.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build solution matrix
+        id: modules
+        run: |
+          matrix=$(
+            find "${{ env.TERRAFORM_SRC }}" -mindepth 2 -maxdepth 2 -type d \
+              | while read -r module_dir; do
+                  [ -f "$module_dir/providers.tf" ] || continue
+                  rel="${module_dir#${{ env.TERRAFORM_SRC }}/}"
+                  artifact=$(echo "$rel" | tr '/' '-')
+                  printf '{"artifact":"%s","path":"%s"}\n' "$artifact" "$module_dir"
+                done \
+              | jq -s -c 'sort_by(.artifact)'
+          )
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  validate:
+    name: Validate ${{ matrix.artifact }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+
+      - name: Terraform fmt
+        run: terraform fmt -check -recursive
+        working-directory: ${{ matrix.path }}
+
+      - name: Terraform init
+        run: terraform init -backend=false -input=false
+        working-directory: ${{ matrix.path }}
+
+      - name: Terraform validate
+        run: terraform validate
+        working-directory: ${{ matrix.path }}
+
+  package:
+    name: Package ${{ matrix.artifact }}
+    needs: [discover, validate]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create artifact archive
+        run: |
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          (cd "${{ matrix.path }}" && zip -r "$GITHUB_WORKSPACE/dist/${{ matrix.artifact }}.zip" . \
+            -x '.terraform/*' -x '*.tfstate' -x '*.tfstate.*')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/${{ matrix.artifact }}.zip
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [discover, validate, package]
+    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Set release metadata
+        id: meta
+        run: |
+          if [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "tag=v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "name=Release v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
+            echo "name=Pre-release v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: ${{ steps.meta.outputs.name }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          generate_release_notes: true
+          files: dist/*.zip
