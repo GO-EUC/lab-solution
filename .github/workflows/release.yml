@@ -110,20 +110,26 @@ jobs:
         run: |
           # Version format: YYMM.dd.rev (UTC)
           base="$(date -u +%y%m).$(date -u +%d)"
+          base_regex="^v$(echo "$base" | sed 's/\./\\./g')\\.([0-9]+)"
           latest_rev=0
 
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
             tag_suffix=""
             name_prefix="Release"
             prerelease="false"
-          else
-            tag_suffix="-dev"
+            make_latest="true"
+          elif [ "${{ github.ref }}" = "refs/heads/develop" ]; then
+            tag_suffix="-pre"
             name_prefix="Pre-release"
             prerelease="true"
+            make_latest="false"
+          else
+            echo "Unsupported branch for release: ${{ github.ref }}"
+            exit 1
           fi
 
           for tag in $(git tag -l "v${base}.*"); do
-            if [[ "$tag" =~ ^v${base}\.([0-9]+)${tag_suffix}$ ]]; then
+            if [[ "$tag" =~ ${base_regex}${tag_suffix}$ ]]; then
               rev="${BASH_REMATCH[1]}"
               if [ "$rev" -gt "$latest_rev" ]; then
                 latest_rev="$rev"
@@ -135,12 +141,14 @@ jobs:
           echo "tag=v${version}${tag_suffix}" >> "$GITHUB_OUTPUT"
           echo "name=${name_prefix} ${version}" >> "$GITHUB_OUTPUT"
           echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
+          echo "make_latest=${make_latest}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.meta.outputs.tag }}
           name: ${{ steps.meta.outputs.name }}
-          prerelease: ${{ steps.meta.outputs.prerelease }}
+          prerelease: ${{ steps.meta.outputs.prerelease == 'true' }}
+          make_latest: ${{ steps.meta.outputs.make_latest == 'true' }}
           generate_release_notes: true
           files: dist/*.zip
