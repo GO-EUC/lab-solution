@@ -13,7 +13,7 @@ resource "azurerm_subnet" "snet" {
   default_outbound_access_enabled   = false
   private_endpoint_network_policies = "Enabled"
 
-  service_endpoints    = ["Microsoft.Storage"]
+  service_endpoints = ["Microsoft.Storage"]
 }
 
 resource "azurerm_network_security_group" "nsg" {
