@@ -96,6 +96,10 @@ jobs:
     if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - uses: actions/download-artifact@v4
         with:
           path: dist
@@ -104,15 +108,33 @@ jobs:
       - name: Set release metadata
         id: meta
         run: |
+          # Version format: YYMM.dd.rev (UTC)
+          base="$(date -u +%y%m).$(date -u +%d)"
+          latest_rev=0
+
           if [ "${{ github.ref }}" = "refs/heads/main" ]; then
-            echo "tag=v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "name=Release v${{ github.run_number }}" >> "$GITHUB_OUTPUT"
-            echo "prerelease=false" >> "$GITHUB_OUTPUT"
+            tag_suffix=""
+            name_prefix="Release"
+            prerelease="false"
           else
-            echo "tag=v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
-            echo "name=Pre-release v${{ github.run_number }}-dev" >> "$GITHUB_OUTPUT"
-            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+            tag_suffix="-dev"
+            name_prefix="Pre-release"
+            prerelease="true"
           fi
+
+          for tag in $(git tag -l "v${base}.*"); do
+            if [[ "$tag" =~ ^v${base}\.([0-9]+)${tag_suffix}$ ]]; then
+              rev="${BASH_REMATCH[1]}"
+              if [ "$rev" -gt "$latest_rev" ]; then
+                latest_rev="$rev"
+              fi
+            fi
+          done
+
+          version="${base}.$((latest_rev + 1))"
+          echo "tag=v${version}${tag_suffix}" >> "$GITHUB_OUTPUT"
+          echo "name=${name_prefix} ${version}" >> "$GITHUB_OUTPUT"
+          echo "prerelease=${prerelease}" >> "$GITHUB_OUTPUT"
 
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
